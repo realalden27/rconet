@@ -327,7 +327,9 @@ impl CommandExchange {
             return self.finish_sentinel(frame, sentinel_id, pending_sentinel_trailer);
         }
 
-        if frame.id != self.command_id {
+        if frame.id != self.command_id
+            && (!self.dialect.allow_zero_packet_id() || frame.id != PacketId::from_raw(0))
+        {
             return Err(ProtoError::UnexpectedPacketId {
                 expected: self.command_id,
                 actual: frame.id,

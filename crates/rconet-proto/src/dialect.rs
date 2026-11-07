@@ -67,6 +67,13 @@ pub enum Preset {
     /// Suitable for game servers where sending an empty sentinel frame receives no reply or errors.
     SinglePacket,
 
+    /// Palworld Dedicated Server binary RCON over TCP.
+    ///
+    /// - Max command payload: `4096` bytes.
+    /// - Termination: [`TerminationMode::SinglePacket`].
+    /// - Correlates command response packets with `PacketId(0)` emitted by Unreal Engine's RCON.
+    Palworld,
+
     /// Single-packet TCP RCON with Base64 UTF-8 payload wrapping.
     #[cfg(feature = "base64")]
     Base64Tcp,
@@ -81,6 +88,7 @@ pub struct DialectProfile {
     auth_encoding: PayloadEncoding,
     min_command_interval: Option<Duration>,
     max_pre_auth_frames: usize,
+    allow_zero_packet_id: bool,
 }
 
 impl Default for DialectProfile {
@@ -107,6 +115,7 @@ impl DialectProfile {
                 auth_encoding: PayloadEncoding::LossyUtf8,
                 min_command_interval: None,
                 max_pre_auth_frames: 8,
+                allow_zero_packet_id: false,
             },
             Preset::MinecraftJava => Self {
                 limits: FrameLimits::minecraft_java_default(),
@@ -115,6 +124,7 @@ impl DialectProfile {
                 auth_encoding: PayloadEncoding::LossyUtf8,
                 min_command_interval: None,
                 max_pre_auth_frames: 4,
+                allow_zero_packet_id: false,
             },
             Preset::SinglePacket => Self {
                 limits: FrameLimits::source_default(),
@@ -123,6 +133,16 @@ impl DialectProfile {
                 auth_encoding: PayloadEncoding::LossyUtf8,
                 min_command_interval: None,
                 max_pre_auth_frames: 8,
+                allow_zero_packet_id: false,
+            },
+            Preset::Palworld => Self {
+                limits: FrameLimits::source_default(),
+                termination: TerminationMode::SinglePacket,
+                encoding: PayloadEncoding::LossyUtf8,
+                auth_encoding: PayloadEncoding::LossyUtf8,
+                min_command_interval: None,
+                max_pre_auth_frames: 8,
+                allow_zero_packet_id: true,
             },
             #[cfg(feature = "base64")]
             Preset::Base64Tcp => Self {
@@ -132,6 +152,7 @@ impl DialectProfile {
                 auth_encoding: PayloadEncoding::LossyUtf8,
                 min_command_interval: None,
                 max_pre_auth_frames: 8,
+                allow_zero_packet_id: false,
             },
         }
     }
@@ -178,6 +199,19 @@ impl DialectProfile {
     #[must_use]
     pub const fn max_pre_auth_frames(self) -> usize {
         self.max_pre_auth_frames
+    }
+
+    /// Whether to correlate response packets with `PacketId(0)` (required by Palworld / Unreal Engine).
+    #[must_use]
+    pub const fn allow_zero_packet_id(self) -> bool {
+        self.allow_zero_packet_id
+    }
+
+    /// Sets whether to correlate response packets with `PacketId(0)`.
+    #[must_use]
+    pub const fn with_allow_zero_packet_id(mut self, allow: bool) -> Self {
+        self.allow_zero_packet_id = allow;
+        self
     }
 
     /// Overrides the [`FrameLimits`].
