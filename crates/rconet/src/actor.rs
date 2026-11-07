@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use rconet_proto::{CommandOutput, DialectProfile};
 use rconet_transport::{FramedConnection, TransportError};
-use rconet_types::{CommandPhase, Idempotency, SecretPassword, TimeoutConfig, TypeError};
+#[cfg(feature = "tokio-tcp")]
+use rconet_types::SecretPassword;
+use rconet_types::{CommandPhase, Idempotency, TimeoutConfig, TypeError};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "tokio-tcp")]
 use tokio::net::TcpStream;

@@ -169,6 +169,11 @@ impl Client {
         self.state_rx.clone()
     }
 
+    #[cfg(feature = "pool")]
+    pub(crate) fn signal_shutdown(&self) {
+        let _ = self.shutdown_tx.send(true);
+    }
+
     /// Signals any in-progress reconnect sleep to abort, flushes and closes the active stream,
     /// and waits for the background session actor to terminate cleanly.
     pub async fn shutdown(&self) -> Result<(), Error> {

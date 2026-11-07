@@ -7,10 +7,11 @@
 //! # Quickstart
 //!
 //! ```no_run
+//! # #[cfg(feature = "tokio-tcp")]
+//! # async fn run() -> Result<(), rconet::Error> {
 //! use std::time::Duration;
 //! use rconet::{Client, Preset, ReconnectPolicy};
 //!
-//! # async fn run() -> Result<(), rconet::Error> {
 //! let client = Client::builder()
 //!     .address("127.0.0.1:25575")
 //!     .password("s3cr3t")
@@ -33,14 +34,29 @@
 mod actor;
 mod client;
 mod error;
+#[cfg(feature = "fleet")]
+mod fleet;
 mod policy;
+#[cfg(feature = "pool")]
+mod pool;
 mod state;
 
 pub use client::{Client, ClientBuilder, DEFAULT_QUEUE_CAPACITY, MAX_QUEUE_CAPACITY};
 pub use error::Error;
+#[cfg(feature = "fleet")]
+pub use fleet::{
+    DEFAULT_FLEET_CONCURRENCY, DEFAULT_FLEET_EVENT_CAPACITY, FleetEvent, FleetFilter, FleetManager,
+    MAX_FLEET_CONCURRENCY,
+};
 pub use policy::{ReconnectPolicy, ReplayMode};
+#[cfg(feature = "pool")]
+pub use pool::{MAX_POOL_SESSIONS, PooledClient, ServerPool};
 pub use rconet_proto::{
     CommandOutput, DialectProfile, PayloadEncoding, Preset, ProtoError, TerminationMode,
+};
+#[cfg(feature = "webrcon")]
+pub use rconet_proto::{
+    DEFAULT_WEBRCON_CLIENT_NAME, WebRconEvent, WebRconMessageKind, WebRconRequest,
 };
 pub use rconet_transport::{CommandFailureKind, FramedConnection, TransportError};
 pub use rconet_types::{

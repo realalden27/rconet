@@ -36,3 +36,10 @@ layer = "L3"
 status = "complete"
 min_tests = 9
 description = "Cancellation-safe session actor and conservative non-replay reconnection engine"
+
+[[capabilities]]
+id = "client.pool_and_fleet"
+layer = "L3"
+status = "complete"
+min_tests = 5
+description = "Bounded session pool, tagged multi-server fleet broadcast, and reactive fleet events"

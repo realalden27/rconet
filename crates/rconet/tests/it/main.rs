@@ -1,3 +1,5 @@
+mod pool_fleet;
+
 use std::time::Duration;
 
 use bytes::BytesMut;

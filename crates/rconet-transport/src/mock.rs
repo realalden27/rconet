@@ -140,6 +140,7 @@ impl MockServerConfig {
 #[derive(Debug, Default)]
 struct RecordedState {
     executed_commands: Vec<String>,
+    #[cfg(feature = "tokio-tcp")]
     connections_accepted: usize,
 }
 
