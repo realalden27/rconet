@@ -560,6 +560,7 @@ dependencies = [
 name = "rconet"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "rconet-proto",
  "rconet-transport",
  "rconet-types",

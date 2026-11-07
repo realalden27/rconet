@@ -65,6 +65,8 @@ pub enum MockReply {
     },
     /// Accepts the command (recording it as executed) and immediately drops the socket.
     DropConnectionMidFlight,
+    /// Drops the connection on the first execution of this command, then replies normally on subsequent executions.
+    DropFirstThenSingle(String),
     /// Writes arbitrary raw bytes onto the socket (for malformed-frame and desync testing).
     InjectRawWire(Bytes),
 }
@@ -287,11 +289,18 @@ async fn serve_stream<S>(
                     return;
                 }
                 let cmd_text = String::from_utf8_lossy(&frame.payload).into_owned();
-                {
+                let occurrence = {
                     let mut guard = state.lock().unwrap_or_else(PoisonError::into_inner);
                     guard.executed_commands.push(cmd_text.clone());
-                }
-                if !handle_exec_frame(&mut stream, &codec, config, frame.id, &cmd_text).await {
+                    guard
+                        .executed_commands
+                        .iter()
+                        .filter(|seen| *seen == &cmd_text)
+                        .count()
+                };
+                if !handle_exec_frame(&mut stream, &codec, config, frame.id, &cmd_text, occurrence)
+                    .await
+                {
                     return;
                 }
             },
@@ -377,6 +386,7 @@ async fn handle_exec_frame<S>(
     config: &MockServerConfig,
     req_id: PacketId,
     cmd_text: &str,
+    occurrence: usize,
 ) -> bool
 where
     S: AsyncWrite + Unpin,
@@ -424,6 +434,19 @@ where
             .await
         },
         MockReply::DropConnectionMidFlight => false,
+        MockReply::DropFirstThenSingle(body) => {
+            if occurrence <= 1 {
+                false
+            } else {
+                send_frames(
+                    stream,
+                    codec,
+                    &[RawFrame::response_value(req_id, body)],
+                    config.write_chunk_size,
+                )
+                .await
+            }
+        },
         MockReply::InjectRawWire(raw_wire) => {
             write_wire_bytes(stream, &raw_wire, config.write_chunk_size).await
         },

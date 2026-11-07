@@ -33,6 +33,6 @@ description = "Framed async TCP/stream transport with deadlines and deterministi
 [[capabilities]]
 id = "client.session_actor"
 layer = "L3"
-status = "planned"
-min_tests = 0
+status = "complete"
+min_tests = 9
 description = "Cancellation-safe session actor and conservative non-replay reconnection engine"
