@@ -19,8 +19,8 @@ description = "Redacted credentials, typed identifiers, bounded limits, and deli
 [[capabilities]]
 id = "proto.wire_codec"
 layer = "L1"
-status = "planned"
-min_tests = 0
+status = "complete"
+min_tests = 20
 description = "Bounds-checked binary framing, dialect profiles, auth & response termination state machines"
 
 [[capabilities]]

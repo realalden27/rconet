@@ -42,15 +42,31 @@ pub struct FrameLimits {
 
 impl Default for FrameLimits {
     fn default() -> Self {
+        Self::source_default()
+    }
+}
+
+impl FrameLimits {
+    /// Standard limits for Source RCON (`16 KiB` inbound frame, `4096 B` command, `4 MiB` response).
+    #[must_use]
+    pub const fn source_default() -> Self {
         Self {
             max_inbound_frame_bytes: DEFAULT_MAX_INBOUND_FRAME_BYTES,
             max_command_bytes: SOURCE_MAX_COMMAND_BYTES,
             max_accumulated_response_bytes: DEFAULT_MAX_ACCUMULATED_RESPONSE_BYTES,
         }
     }
-}
 
-impl FrameLimits {
+    /// Standard limits for Minecraft Java RCON (`16 KiB` inbound frame, `1446 B` command, `4 MiB` response).
+    #[must_use]
+    pub const fn minecraft_java_default() -> Self {
+        Self {
+            max_inbound_frame_bytes: DEFAULT_MAX_INBOUND_FRAME_BYTES,
+            max_command_bytes: MINECRAFT_JAVA_MAX_COMMAND_BYTES,
+            max_accumulated_response_bytes: DEFAULT_MAX_ACCUMULATED_RESPONSE_BYTES,
+        }
+    }
+
     /// Constructs validated frame and payload limits.
     pub const fn new(
         max_inbound_frame_bytes: usize,
