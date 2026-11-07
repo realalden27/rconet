@@ -12,8 +12,8 @@ description = "Workspace layering, lint enforcement, and xtask verification pipe
 [[capabilities]]
 id = "types.foundation"
 layer = "L0"
-status = "planned"
-min_tests = 0
+status = "complete"
+min_tests = 10
 description = "Redacted credentials, typed identifiers, bounded limits, and delivery phase taxonomy"
 
 [[capabilities]]
