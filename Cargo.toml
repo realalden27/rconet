@@ -47,8 +47,8 @@ cognitive_complexity = "deny"
 [workspace.dependencies]
 # Internal workspace crates
 rconet-types = { version = "0.1.0", path = "crates/rconet-types" }
-rconet-proto = { version = "0.1.0", path = "crates/rconet-proto" }
-rconet-transport = { version = "0.1.0", path = "crates/rconet-transport" }
+rconet-proto = { version = "0.1.0", path = "crates/rconet-proto", default-features = false }
+rconet-transport = { version = "0.1.0", path = "crates/rconet-transport", default-features = false }
 rconet = { version = "0.1.0", path = "crates/rconet" }
 
 # Core dependencies

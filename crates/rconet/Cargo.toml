@@ -28,8 +28,8 @@ fleet = []
 test-util = ["rconet-transport/test-util"]
 
 [dependencies]
-rconet-proto = { workspace = true, default-features = false }
-rconet-transport = { workspace = true, default-features = false }
+rconet-proto.workspace = true
+rconet-transport.workspace = true
 rconet-types.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
@@ -37,5 +37,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true
-rconet-transport = { workspace = true, default-features = false, features = ["test-util"] }
+rconet-transport = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
