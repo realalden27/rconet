@@ -26,8 +26,8 @@ description = "Bounds-checked binary framing, dialect profiles, auth & response 
 [[capabilities]]
 id = "transport.tokio_tcp"
 layer = "L2"
-status = "planned"
-min_tests = 0
+status = "complete"
+min_tests = 8
 description = "Framed async TCP/stream transport with deadlines and deterministic mock server"
 
 [[capabilities]]
