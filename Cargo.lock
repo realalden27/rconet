@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "rconet"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "rconet-proto",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "rconet-benches"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "criterion",
@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "rconet-examples"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rconet",
  "tokio",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "rconet-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "bytes",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "rconet-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "rconet-proto",
@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "rconet-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
  "zeroize",
@@ -1137,7 +1137,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",

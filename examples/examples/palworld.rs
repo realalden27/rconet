@@ -1,7 +1,7 @@
 //! Palworld RCON example demonstrating `Preset::Palworld`.
 
-use std::time::Duration;
 use rconet::{Client, Preset};
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
