@@ -8,8 +8,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/rconet"
 keywords.workspace = true
 categories.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true
@@ -21,6 +25,7 @@ base64 = ["rconet-proto/base64"]
 webrcon = ["rconet-proto/webrcon"]
 pool = []
 fleet = []
+test-util = ["rconet-transport/test-util"]
 
 [dependencies]
 rconet-proto = { workspace = true, default-features = false }
@@ -32,4 +37,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true
+rconet-transport = { workspace = true, default-features = false, features = ["test-util"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }

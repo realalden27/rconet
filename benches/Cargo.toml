@@ -12,7 +12,7 @@ workspace = true
 bytes.workspace = true
 rconet.workspace = true
 rconet-proto.workspace = true
-rconet-transport.workspace = true
+rconet-transport = { workspace = true, features = ["test-util"] }
 rconet-types.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt"] }
 

@@ -2,11 +2,13 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 use rconet_proto::{
     AuthStep, CommandExchange, CommandOutput, CommandStep, DialectProfile, ProtocolState, RawFrame,
 };
-use rconet_types::{CommandPhase, SecretPassword, SessionId, TimeoutConfig};
+use rconet_types::{
+    CommandPhase, MAX_TIMEOUT_DURATION, PacketId, SecretPassword, SessionId, TimeoutConfig,
+};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "tokio-tcp")]
 use tokio::net::{TcpStream, ToSocketAddrs};
@@ -136,7 +138,7 @@ where
             TransportError::AuthProtocol(err)
         })?;
 
-        let auth_deadline = Instant::now() + self.timeouts.auth_timeout();
+        let auth_deadline = bounded_deadline(self.timeouts.auth_timeout());
 
         if let Err(err) = self.write_all_bounded(&wire, auth_deadline).await {
             self.healthy = false;
@@ -229,7 +231,7 @@ where
                     kind: CommandFailureKind::Validation(err),
                 })?;
 
-        let deadline = Instant::now() + command_timeout;
+        let deadline = bounded_deadline(command_timeout);
 
         if let Err(kind) = self.write_all_bounded(&wire, deadline).await {
             self.healthy = false;
@@ -255,15 +257,79 @@ where
             .map_err(TransportError::ConnectIo)
     }
 
+    /// Monitors an idle stream for remote EOF (`FIN`), `RST`, or unexpected unsolicited frames.
+    ///
+    /// Cancel-safe for use inside `tokio::select!`. Absorbs delayed 18-byte SRCDS sentinel
+    /// trailers transparently and marks `self.healthy = false` upon disconnect or unexpected
+    /// wire data before returning.
+    pub async fn monitor_idle(&mut self) {
+        if !self.healthy {
+            return;
+        }
+
+        loop {
+            self.drain_buffered_trailer();
+            match self.proto.codec().decode(&mut self.read_buf) {
+                Ok(Some(frame)) => {
+                    if !self.proto.try_absorb_immediate_trailer(&frame) {
+                        self.healthy = false;
+                        return;
+                    }
+                },
+                Ok(None) => {
+                    if !self.read_idle_chunk().await {
+                        self.healthy = false;
+                        return;
+                    }
+                },
+                Err(_) => {
+                    self.healthy = false;
+                    return;
+                },
+            }
+        }
+    }
+
+    async fn read_idle_chunk(&mut self) -> bool {
+        if self.read_buf.is_empty() {
+            matches!(self.stream.read_buf(&mut self.read_buf).await, Ok(n) if n > 0)
+        } else {
+            matches!(
+                timeout(
+                    self.timeouts.frame_io_timeout(),
+                    self.stream.read_buf(&mut self.read_buf),
+                )
+                .await,
+                Ok(Ok(n)) if n > 0
+            )
+        }
+    }
+
     async fn drive_command_response(
         &mut self,
         exchange: &mut CommandExchange,
         deadline: Instant,
         command_timeout: Duration,
     ) -> Result<CommandOutput, TransportError> {
+        let mut active_coalesce_window: Option<Duration> = None;
+
         loop {
-            let frame = match self.read_frame_bounded(deadline).await {
-                Ok(frame) => frame,
+            let next_frame = match active_coalesce_window {
+                None => self.read_frame_bounded(deadline).await.map(Some),
+                Some(idle_window) => self.read_next_coalesced_frame(deadline, idle_window).await,
+            };
+
+            let frame = match next_frame {
+                Ok(Some(frame)) => frame,
+                Ok(None) => {
+                    return self.proto.finish_coalesced(exchange).map_err(|proto_err| {
+                        self.healthy = false;
+                        TransportError::Command {
+                            phase: CommandPhase::OutcomeUnknown,
+                            kind: CommandFailureKind::Protocol(proto_err),
+                        }
+                    });
+                },
                 Err(kind) => {
                     self.healthy = false;
                     return Err(TransportError::Command {
@@ -274,7 +340,12 @@ where
             };
 
             match self.proto.advance_command(exchange, frame) {
-                Ok(CommandStep::NeedMoreFrames | CommandStep::Coalescing { .. }) => {},
+                Ok(CommandStep::NeedMoreFrames) => {
+                    active_coalesce_window = None;
+                },
+                Ok(CommandStep::Coalescing { idle_window }) => {
+                    active_coalesce_window = Some(idle_window);
+                },
                 Ok(CommandStep::Completed(output)) => {
                     self.drain_buffered_trailer();
                     return Ok(output);
@@ -291,17 +362,70 @@ where
         }
     }
 
-    /// If classic SRCDS already delivered its 14-byte second sentinel packet inside the same
-    /// TCP segment as the primary sentinel packet, consume it immediately from `read_buf`.
-    fn drain_buffered_trailer(&mut self) {
+    async fn read_next_coalesced_frame(
+        &mut self,
+        overall_deadline: Instant,
+        idle_window: Duration,
+    ) -> Result<Option<RawFrame>, CommandFailureKind> {
+        match self.proto.codec().decode(&mut self.read_buf) {
+            Ok(Some(frame)) => return Ok(Some(frame)),
+            Ok(None) => {},
+            Err(proto_err) => return Err(CommandFailureKind::Protocol(proto_err)),
+        }
+
         if self.read_buf.is_empty() {
+            let Some(remaining) = overall_deadline.checked_duration_since(Instant::now()) else {
+                return Err(CommandFailureKind::DeadlineExceeded {
+                    timeout: Duration::ZERO,
+                });
+            };
+            if idle_window.is_zero() {
+                return Ok(None);
+            }
+            let wait_for_window = idle_window <= remaining;
+            let wait_dur = remaining.min(idle_window);
+
+            match timeout(wait_dur, self.stream.read_buf(&mut self.read_buf)).await {
+                Ok(Ok(0)) => return Err(CommandFailureKind::UnexpectedEof),
+                Ok(Ok(_n)) => {},
+                Ok(Err(io_err)) => return Err(CommandFailureKind::ReadIo(io_err)),
+                Err(_) => {
+                    return if wait_for_window {
+                        Ok(None)
+                    } else {
+                        Err(CommandFailureKind::DeadlineExceeded { timeout: remaining })
+                    };
+                },
+            }
+        }
+
+        self.read_frame_bounded(overall_deadline).await.map(Some)
+    }
+
+    /// If classic SRCDS already delivered its 18-byte second sentinel packet inside the same
+    /// TCP segment as the primary sentinel packet, consume it in `O(1)` without cloning `read_buf`.
+    fn drain_buffered_trailer(&mut self) {
+        const TRAILER_WIRE_LEN: usize = 18;
+        let Some(wire) = self.read_buf.get(..TRAILER_WIRE_LEN) else {
+            return;
+        };
+        if wire.get(..4) != Some(&14i32.to_le_bytes()[..])
+            || wire.get(8..18) != Some(&[0, 0, 0, 0, 0, 1, 0, 0, 0, 0][..])
+        {
             return;
         }
-        let mut probe = self.read_buf.clone();
-        if let Ok(Some(next_frame)) = self.proto.codec().decode(&mut probe)
-            && self.proto.try_absorb_immediate_trailer(&next_frame)
-        {
-            self.read_buf = probe;
+        let Some(id_slice) = wire.get(4..8) else {
+            return;
+        };
+        let Ok(id_bytes) = <[u8; 4]>::try_from(id_slice) else {
+            return;
+        };
+        let candidate = RawFrame::response_value(
+            PacketId::from_raw(i32::from_le_bytes(id_bytes)),
+            Bytes::from_static(&[0x00, 0x01, 0x00, 0x00]),
+        );
+        if self.proto.try_absorb_immediate_trailer(&candidate) {
+            self.read_buf.advance(TRAILER_WIRE_LEN);
         }
     }
 
@@ -375,6 +499,14 @@ where
             }
         }
     }
+}
+
+fn bounded_deadline(duration: Duration) -> Instant {
+    let clamped = duration.min(MAX_TIMEOUT_DURATION);
+    let now = Instant::now();
+    now.checked_add(clamped)
+        .or_else(|| now.checked_add(Duration::from_secs(3_600)))
+        .unwrap_or(now)
 }
 
 fn remap_deadline_kind(

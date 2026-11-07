@@ -8,6 +8,7 @@
 
 mod connection;
 mod error;
+#[cfg(feature = "test-util")]
 pub mod mock;
 
 pub use connection::FramedConnection;

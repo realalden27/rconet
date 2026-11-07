@@ -9,7 +9,7 @@ publish = false
 workspace = true
 
 [dependencies]
-rconet = { workspace = true, features = ["pool", "fleet", "webrcon"] }
+rconet = { workspace = true, features = ["pool", "fleet", "webrcon", "test-util"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [[example]]

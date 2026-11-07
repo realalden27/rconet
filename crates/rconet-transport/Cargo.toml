@@ -7,8 +7,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation = "https://docs.rs/rconet-transport"
+readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true
@@ -16,14 +21,16 @@ workspace = true
 [features]
 default = ["tokio-tcp"]
 tokio-tcp = ["tokio/net"]
+test-util = ["tokio/macros", "tokio/rt", "tokio/sync"]
 
 [dependencies]
 bytes.workspace = true
 rconet-proto.workspace = true
 rconet-types.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+rconet-transport = { path = ".", default-features = false, features = ["test-util"] }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
