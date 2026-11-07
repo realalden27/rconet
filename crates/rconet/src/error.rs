@@ -86,7 +86,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// Converts a [`TransportError`] into a structured client [`Error`] preserving [`CommandPhase`].
+    /// Converts a [`TransportError`] into a structured client [`Self`] preserving [`CommandPhase`].
     #[must_use]
     pub fn from_transport(err: TransportError) -> Self {
         if err.is_auth_rejected() {

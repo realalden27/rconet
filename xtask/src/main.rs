@@ -1,5 +1,6 @@
 mod ci;
 mod docs;
+mod fuzz;
 mod layers;
 mod version;
 
@@ -25,6 +26,7 @@ fn run() -> Result<(), String> {
 
     match subcommand.as_str() {
         "ci" => ci::run_ci(),
+        "fuzz" => fuzz::run_fuzz(),
         "layers" => layers::check_layers(),
         "docs" => {
             let check_only = args.any(|arg| arg == "--check");
@@ -52,6 +54,7 @@ fn print_usage() {
         "Usage: cargo xtask <COMMAND>\n\n\
          Commands:\n  \
            ci               Run formatting, clippy, feature checks, tests, layers, and docs check\n  \
+           fuzz             Run adversarial panic-hunt and extended property test suites\n  \
            layers           Validate directional crate layering and runtime-free core invariants\n  \
            docs [--check]   Generate or verify docs/scorecard.md from docs/scorecard.toml\n  \
            version <X.Y.Z>  Update workspace package version"

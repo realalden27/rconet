@@ -29,6 +29,7 @@ pub(crate) fn run_ci() -> Result<(), String> {
     }
 
     run_cargo(&["test", "--workspace", "--doc", "--all-features"])?;
+    run_rustdoc_strict()?;
 
     layers::check_layers()?;
     docs::run_docs(true)?;
@@ -42,6 +43,21 @@ fn has_nextest() -> bool {
         .args(["nextest", "--version"])
         .output()
         .is_ok_and(|out| out.status.success())
+}
+
+fn run_rustdoc_strict() -> Result<(), String> {
+    let args = ["doc", "--workspace", "--no-deps", "--all-features"];
+    println!("==> RUSTDOCFLAGS=\"-D warnings\" cargo {}", args.join(" "));
+    let status = Command::new("cargo")
+        .env("RUSTDOCFLAGS", "-D warnings")
+        .args(args)
+        .status()
+        .map_err(|err| format!("failed to spawn cargo doc: {err}"))?;
+
+    if !status.success() {
+        return Err(format!("`cargo doc` failed with status {status}"));
+    }
+    Ok(())
 }
 
 fn run_cargo(args: &[&str]) -> Result<(), String> {

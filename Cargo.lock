@@ -577,7 +577,9 @@ dependencies = [
  "criterion",
  "rconet",
  "rconet-proto",
+ "rconet-transport",
  "rconet-types",
+ "tokio",
 ]
 
 [[package]]

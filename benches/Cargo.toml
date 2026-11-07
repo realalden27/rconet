@@ -12,7 +12,14 @@ workspace = true
 bytes.workspace = true
 rconet.workspace = true
 rconet-proto.workspace = true
+rconet-transport.workspace = true
 rconet-types.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
 
 [dev-dependencies]
 criterion.workspace = true
+
+[[bench]]
+name = "codec_and_session"
+path = "benches/codec_and_session.rs"
+harness = false

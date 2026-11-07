@@ -137,9 +137,12 @@ impl MockServerConfig {
     }
 }
 
+const MAX_RECORDED_COMMANDS: usize = 4096;
+
 #[derive(Debug, Default)]
 struct RecordedState {
     executed_commands: Vec<String>,
+    command_counts: HashMap<String, usize>,
     #[cfg(feature = "tokio-tcp")]
     connections_accepted: usize,
 }
@@ -292,12 +295,12 @@ async fn serve_stream<S>(
                 let cmd_text = String::from_utf8_lossy(&frame.payload).into_owned();
                 let occurrence = {
                     let mut guard = state.lock().unwrap_or_else(PoisonError::into_inner);
-                    guard.executed_commands.push(cmd_text.clone());
-                    guard
-                        .executed_commands
-                        .iter()
-                        .filter(|seen| *seen == &cmd_text)
-                        .count()
+                    if guard.executed_commands.len() < MAX_RECORDED_COMMANDS {
+                        guard.executed_commands.push(cmd_text.clone());
+                    }
+                    let count = guard.command_counts.entry(cmd_text.clone()).or_insert(0);
+                    *count = count.saturating_add(1);
+                    *count
                 };
                 if !handle_exec_frame(&mut stream, &codec, config, frame.id, &cmd_text, occurrence)
                     .await

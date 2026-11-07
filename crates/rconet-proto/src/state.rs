@@ -570,4 +570,66 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    #[ignore = "adversarial panic-hunt matrix; run with cargo xtask fuzz"]
+    fn panic_hunt_state_machines_and_encodings() {
+        let presets = [
+            Preset::Source,
+            Preset::MinecraftJava,
+            Preset::SinglePacket,
+            #[cfg(feature = "base64")]
+            Preset::Base64Tcp,
+        ];
+        for preset in presets {
+            exercise_preset_adversarial(preset);
+        }
+    }
+
+    fn exercise_preset_adversarial(preset: Preset) {
+        let frames = build_hostile_frames();
+        let mut proto = ProtocolState::new(DialectProfile::from(preset));
+
+        for cmd in ["", "status", "bad\0cmd", &"x".repeat(5000)] {
+            let _ = proto.begin_command(cmd);
+        }
+
+        if let Ok((mut auth, _)) = proto.begin_auth(&SecretPassword::new("pw")) {
+            for frame in &frames {
+                let _ = auth.on_frame(frame.clone());
+            }
+        }
+
+        if let Ok((mut ex, _)) = proto.begin_command("status") {
+            for frame in &frames {
+                let _ = proto.advance_command(&mut ex, frame.clone());
+            }
+        }
+    }
+
+    fn build_hostile_frames() -> Vec<RawFrame> {
+        let hostile_ids = [i32::MIN, -2, -1, 0, 1, 2, 42, i32::MAX];
+        let hostile_types = [i32::MIN, -1, 0, 1, 2, 3, 99, i32::MAX];
+        let hostile_payloads: &[&[u8]] = &[
+            b"",
+            b"\x00\x01\x00\x00",
+            b"\xff\xfe\xfd\x80",
+            b"===not-base64!!!===",
+            b"normal-ascii-body",
+        ];
+
+        let mut out = Vec::new();
+        for &id in &hostile_ids {
+            for &ty in &hostile_types {
+                for &body in hostile_payloads {
+                    out.push(RawFrame {
+                        id: PacketId::from_raw(id),
+                        kind: PacketKind::from_raw(ty),
+                        payload: bytes::Bytes::copy_from_slice(body),
+                    });
+                }
+            }
+        }
+        out
+    }
 }

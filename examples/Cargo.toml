@@ -11,3 +11,27 @@ workspace = true
 [dependencies]
 rconet = { workspace = true, features = ["pool", "fleet", "webrcon"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[[example]]
+name = "quickstart"
+path = "examples/quickstart.rs"
+
+[[example]]
+name = "minecraft"
+path = "examples/minecraft.rs"
+
+[[example]]
+name = "source_engine"
+path = "examples/source_engine.rs"
+
+[[example]]
+name = "server_pool"
+path = "examples/server_pool.rs"
+
+[[example]]
+name = "multi_server_fleet"
+path = "examples/multi_server_fleet.rs"
+
+[[example]]
+name = "webrcon_events"
+path = "examples/webrcon_events.rs"

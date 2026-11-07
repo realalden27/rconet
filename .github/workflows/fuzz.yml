@@ -1,0 +1,31 @@
+name: Adversarial Fuzz & Panic-Hunt
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  panic-hunt:
+    name: Hostile Input & Property Suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002 # stable
+
+      - name: Run extended property suites
+        env:
+          PROPTEST_CASES: "10000"
+        run: cargo test -p rconet-types -p rconet-proto --all-features
+
+      - name: Run adversarial panic-hunt suites
+        run: cargo run -p xtask -- fuzz
