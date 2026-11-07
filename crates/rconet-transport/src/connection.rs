@@ -181,6 +181,7 @@ where
             match exchange.on_frame(frame) {
                 Ok(AuthStep::NeedMoreFrames) => {},
                 Ok(AuthStep::Authenticated) => return Ok(()),
+                Ok(_) => {},
                 Err(proto_err) => {
                     self.healthy = false;
                     return Err(TransportError::AuthProtocol(proto_err));
@@ -273,11 +274,12 @@ where
             };
 
             match self.proto.advance_command(exchange, frame) {
-                Ok(CommandStep::NeedMoreFrames) => {},
+                Ok(CommandStep::NeedMoreFrames | CommandStep::Coalescing { .. }) => {},
                 Ok(CommandStep::Completed(output)) => {
                     self.drain_buffered_trailer();
                     return Ok(output);
                 },
+                Ok(_) => {},
                 Err(proto_err) => {
                     self.healthy = false;
                     return Err(TransportError::Command {

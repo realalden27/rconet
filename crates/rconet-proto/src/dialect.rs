@@ -27,6 +27,17 @@ pub enum TerminationMode {
     /// `SinglePacket` mode, subsequent exchanges detect the leftover frame via strict
     /// [`rconet_types::PacketId`] correlation rather than silently returning stale output.
     SinglePacket,
+
+    /// Collects one or more `SERVERDATA_RESPONSE_VALUE` (`0`) frames without sending a trailing
+    /// sentinel packet, completing once no further frame arrives within `idle_window` after the
+    /// most recent fragment.
+    ///
+    /// Ideal for servers whose console parser rejects empty sentinel packets (or logs warnings
+    /// such as `"Unknown request 0"`) when commands may still emit multi-packet responses.
+    CoalesceWindow {
+        /// Quiet window after receiving a response fragment before finalizing the output.
+        idle_window: Duration,
+    },
 }
 
 /// Named protocol presets tuned to verified server implementations.
@@ -45,8 +56,8 @@ pub enum Preset {
     /// - Max command payload: `1446` bytes (`1460`-byte server read buffer minus `14` header/pad bytes).
     /// - Termination: [`TerminationMode::SinglePacket`] by default so servers and proxies do not
     ///   log `"Unknown request 0"` warnings on every command. Callers running commands whose
-    ///   output exceeds `4096` bytes on vanilla servers can opt into
-    ///   `DialectProfile::from(Preset::MinecraftJava).with_termination(TerminationMode::SourceSentinel)`.
+    ///   output exceeds `4096` bytes can opt into [`TerminationMode::CoalesceWindow`] (zero
+    ///   console warnings) or [`TerminationMode::SourceSentinel`] via [`DialectProfile::with_termination`].
     /// - Pacing: No artificial delay (thread-safety issue `MC-72390` was resolved in 1.14.3;
     ///   use [`DialectProfile::minecraft_java_legacy`] for `< 1.14.3` servers).
     MinecraftJava,

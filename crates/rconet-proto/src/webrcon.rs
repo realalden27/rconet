@@ -10,6 +10,7 @@ pub const DEFAULT_WEBRCON_CLIENT_NAME: &str = "rconet";
 ///
 /// Kept inside `rconet-proto` so JSON wire semantics remain completely independent
 /// of any asynchronous WebSocket transport library.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRconRequest {
     /// Positive client correlation identifier echoed in the server's reply.
@@ -65,6 +66,7 @@ pub enum WebRconMessageKind {
 }
 
 /// Inbound JSON message decoded from a WebSocket RCON server.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRconEvent {
     /// Correlation identifier (`> 0` for command replies, `<= 0` for unsolicited broadcasts).

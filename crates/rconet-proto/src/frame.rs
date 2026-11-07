@@ -1,5 +1,6 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use rconet_types::{FrameLimits, PacketId, WIRE_LENGTH_FIELD_BYTES, WIRE_MIN_BODY_HEADER_BYTES};
+use zeroize::Zeroizing;
 
 use crate::error::ProtoError;
 
@@ -54,6 +55,7 @@ impl PacketKind {
 /// - `kind: i32`
 /// - `payload: [u8]`
 /// - `terminator: [0x00, 0x00]`
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawFrame {
     /// Correlating packet identifier.
@@ -65,6 +67,16 @@ pub struct RawFrame {
 }
 
 impl RawFrame {
+    /// Constructs a [`RawFrame`] with explicit identifier, wire packet kind, and payload.
+    #[must_use]
+    pub fn new(id: PacketId, kind: PacketKind, payload: impl Into<Bytes>) -> Self {
+        Self {
+            id,
+            kind,
+            payload: payload.into(),
+        }
+    }
+
     /// Constructs an outbound `SERVERDATA_AUTH` (`3`) frame.
     #[must_use]
     pub fn auth(id: PacketId, password_bytes: impl Into<Bytes>) -> Self {
@@ -166,6 +178,42 @@ impl FrameCodec {
         dst.put_u8(0x00);
         dst.put_u8(0x00);
         Ok(())
+    }
+
+    /// Serializes a sensitive frame (such as `SERVERDATA_AUTH`) directly into a pre-sized
+    /// [`Zeroizing`] buffer so secret payload bytes are never copied into unzeroized heap
+    /// allocations or abandoned during buffer growth.
+    pub fn encode_sensitive(
+        &self,
+        id: PacketId,
+        kind: PacketKind,
+        secret_payload: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>, ProtoError> {
+        let body_len = WIRE_MIN_BODY_HEADER_BYTES
+            .checked_add(secret_payload.len())
+            .ok_or(ProtoError::FrameExceedsLimit {
+                length: usize::MAX,
+                max: self.limits.max_inbound_frame_bytes(),
+            })?;
+        let body_len_i32 = i32::try_from(body_len).map_err(|_| ProtoError::FrameExceedsLimit {
+            length: body_len,
+            max: i32::MAX as usize,
+        })?;
+        let total_wire_len =
+            WIRE_LENGTH_FIELD_BYTES
+                .checked_add(body_len)
+                .ok_or(ProtoError::FrameExceedsLimit {
+                    length: usize::MAX,
+                    max: self.limits.max_inbound_frame_bytes(),
+                })?;
+
+        let mut dst = Zeroizing::new(Vec::with_capacity(total_wire_len));
+        dst.extend_from_slice(&body_len_i32.to_le_bytes());
+        dst.extend_from_slice(&id.as_i32().to_le_bytes());
+        dst.extend_from_slice(&kind.as_i32().to_le_bytes());
+        dst.extend_from_slice(secret_payload);
+        dst.extend_from_slice(&[0x00, 0x00]);
+        Ok(dst)
     }
 
     /// Attempts to decode a single complete [`RawFrame`] from `src`.
@@ -359,23 +407,83 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "adversarial panic-hunt matrix; run with cargo test -- --ignored"]
+    fn encode_sensitive_matches_standard_wire_layout() {
+        let codec = FrameCodec::default();
+        let id = PacketId::from_raw(11);
+        let secret = b"super-secret-rcon-pw";
+
+        let sensitive = codec
+            .encode_sensitive(id, PacketKind::Auth, secret)
+            .unwrap_or_default();
+        let mut regular = BytesMut::new();
+        assert!(
+            codec
+                .encode(&RawFrame::auth(id, &secret[..]), &mut regular)
+                .is_ok()
+        );
+        assert_eq!(sensitive.as_slice(), regular.as_ref());
+    }
+
+    #[test]
+    #[ignore = "adversarial panic-hunt matrix; run with cargo xtask fuzz"]
     fn panic_hunt_hostile_frame_streams() {
         let codec = FrameCodec::default();
-        let mut cases: Vec<Vec<u8>> = vec![
-            vec![],
-            vec![0xFF],
-            vec![0xFF, 0xFF, 0xFF, 0x7F], // i32::MAX
-            vec![0x00, 0x00, 0x00, 0x80], // i32::MIN
-            vec![0x09, 0x00, 0x00, 0x00], // length = 9 (< 10)
-            vec![0x0A, 0x00, 0x00, 0x00, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1], // bad pad
-        ];
-        // Truncated valid header
-        cases.push(vec![0x20, 0x00, 0x00, 0x00, 1, 0, 0, 0]);
+        let corpus = build_hostile_wire_corpus();
+        assert!(corpus.len() >= 1_000);
 
-        for raw in cases {
+        for raw in corpus {
             let mut buf = BytesMut::from(raw.as_slice());
-            let _ = codec.decode(&mut buf);
+            while let Ok(Some(_frame)) = codec.decode(&mut buf) {}
+        }
+    }
+
+    fn build_hostile_wire_corpus() -> Vec<Vec<u8>> {
+        let mut cases = Vec::with_capacity(1_500);
+        cases.push(Vec::new());
+        for prefix_len in 1..=14usize {
+            cases.push(vec![0xFF; prefix_len]);
+        }
+
+        let boundary_lengths = (i32::MIN..=i32::MIN + 64)
+            .chain(-64..=32)
+            .chain(1440..=1470)
+            .chain(4090..=4120)
+            .chain(16380..=16395)
+            .chain((i32::MAX - 32)..=i32::MAX);
+
+        for raw_len in boundary_lengths {
+            let mut header_only = Vec::with_capacity(4);
+            header_only.extend_from_slice(&raw_len.to_le_bytes());
+            cases.push(header_only);
+
+            let mut with_partial_body = Vec::with_capacity(20);
+            with_partial_body.extend_from_slice(&raw_len.to_le_bytes());
+            with_partial_body.extend_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0, b'x', b'y', 0, 0]);
+            cases.push(with_partial_body);
+        }
+
+        append_terminator_and_concat_mutations(&mut cases);
+        cases
+    }
+
+    fn append_terminator_and_concat_mutations(cases: &mut Vec<Vec<u8>>) {
+        for bad_byte in 1u8..=255 {
+            cases.push(vec![11, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, b'a', 0, bad_byte]);
+            cases.push(vec![11, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, b'a', bad_byte, 0]);
+        }
+
+        // Valid frame followed immediately by malformed / truncated / oversized frame:
+        let valid = [12, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, b'o', b'k', 0, 0];
+        for tail in [
+            &[][..],
+            &[0xFF, 0xFF, 0xFF, 0x7F][..],
+            &[0x05, 0x00, 0x00, 0x00][..],
+            &[10, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 1][..],
+            &valid[..],
+        ] {
+            let mut combined = Vec::from(valid);
+            combined.extend_from_slice(tail);
+            cases.push(combined);
         }
     }
 }

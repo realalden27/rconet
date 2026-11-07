@@ -32,6 +32,10 @@ pub const SOURCE_MAX_COMMAND_BYTES: usize = 4096;
 /// (`4B length + 4B request_id + 4B type + 2B NUL` pad).
 pub const MINECRAFT_JAVA_MAX_COMMAND_BYTES: usize = 1446;
 
+/// Hard upper bound (`24 hours`) enforced on timeout durations so `Instant` deadline
+/// arithmetic can never overflow OS monotonic clock representations.
+pub const MAX_TIMEOUT_DURATION: Duration = Duration::from_secs(86_400);
+
 /// Validated byte-size guardrails enforced by wire codecs and response assemblers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameLimits {
@@ -151,32 +155,24 @@ impl Default for TimeoutConfig {
 }
 
 impl TimeoutConfig {
-    /// Constructs validated non-zero timeouts.
+    /// Constructs validated bounded timeouts (`1 ns..=24 hours`).
     pub const fn new(
         connect_timeout: Duration,
         auth_timeout: Duration,
         command_timeout: Duration,
         frame_io_timeout: Duration,
     ) -> Result<Self, TypeError> {
-        if connect_timeout.is_zero() {
-            return Err(TypeError::ZeroTimeout {
-                field: "connect_timeout",
-            });
+        if let Err(err) = validate_timeout("connect_timeout", connect_timeout) {
+            return Err(err);
         }
-        if auth_timeout.is_zero() {
-            return Err(TypeError::ZeroTimeout {
-                field: "auth_timeout",
-            });
+        if let Err(err) = validate_timeout("auth_timeout", auth_timeout) {
+            return Err(err);
         }
-        if command_timeout.is_zero() {
-            return Err(TypeError::ZeroTimeout {
-                field: "command_timeout",
-            });
+        if let Err(err) = validate_timeout("command_timeout", command_timeout) {
+            return Err(err);
         }
-        if frame_io_timeout.is_zero() {
-            return Err(TypeError::ZeroTimeout {
-                field: "frame_io_timeout",
-            });
+        if let Err(err) = validate_timeout("frame_io_timeout", frame_io_timeout) {
+            return Err(err);
         }
         Ok(Self {
             connect_timeout,
@@ -211,6 +207,21 @@ impl TimeoutConfig {
     }
 }
 
+const fn validate_timeout(field: &'static str, value: Duration) -> Result<(), TypeError> {
+    if value.is_zero() {
+        return Err(TypeError::ZeroTimeout { field });
+    }
+    if value.as_secs() > MAX_TIMEOUT_DURATION.as_secs()
+        || (value.as_secs() == MAX_TIMEOUT_DURATION.as_secs() && value.subsec_nanos() > 0)
+    {
+        return Err(TypeError::ExcessiveTimeout {
+            field,
+            max: MAX_TIMEOUT_DURATION,
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,13 +240,25 @@ mod tests {
     }
 
     #[test]
-    fn timeout_config_rejects_zero_durations() {
+    fn timeout_config_rejects_zero_and_excessive_durations() {
         let zero = Duration::ZERO;
         let one = Duration::from_secs(1);
         assert!(TimeoutConfig::new(zero, one, one, one).is_err());
         assert!(TimeoutConfig::new(one, zero, one, one).is_err());
         assert!(TimeoutConfig::new(one, one, zero, one).is_err());
         assert!(TimeoutConfig::new(one, one, one, zero).is_err());
+        assert!(TimeoutConfig::new(Duration::MAX, one, one, one).is_err());
+        assert!(TimeoutConfig::new(one, one, Duration::MAX, one).is_err());
+        assert!(
+            TimeoutConfig::new(
+                MAX_TIMEOUT_DURATION + Duration::from_nanos(1),
+                one,
+                one,
+                one
+            )
+            .is_err()
+        );
+        assert!(TimeoutConfig::new(MAX_TIMEOUT_DURATION, one, one, one).is_ok());
         assert!(TimeoutConfig::new(one, one, one, one).is_ok());
     }
 }

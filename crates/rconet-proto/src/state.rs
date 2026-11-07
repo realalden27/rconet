@@ -1,5 +1,8 @@
+use std::time::Duration;
+
 use bytes::BytesMut;
 use rconet_types::{PacketId, PacketIdAllocator, SecretPassword};
+use zeroize::Zeroizing;
 
 use crate::dialect::{DialectProfile, TerminationMode};
 use crate::error::ProtoError;
@@ -44,11 +47,12 @@ impl ProtocolState {
     }
 
     /// Begins an authentication handshake, returning the serialized outbound wire bytes
-    /// and the [`AuthExchange`] state machine without retaining `password` in memory.
+    /// in a [`Zeroizing`] buffer alongside the [`AuthExchange`] state machine so plaintext
+    /// password bytes are wiped on drop immediately after socket transmission.
     pub fn begin_auth(
         &mut self,
         password: &SecretPassword,
-    ) -> Result<(AuthExchange, BytesMut), ProtoError> {
+    ) -> Result<(AuthExchange, Zeroizing<Vec<u8>>), ProtoError> {
         self.pending_sentinel_trailer = None;
         let auth_id = self.id_allocator.next_id();
         let max_pw_bytes = self
@@ -62,9 +66,9 @@ impl ProtocolState {
             .auth_encoding()
             .encode_password(password.expose_secret(), max_pw_bytes)?;
 
-        let frame = RawFrame::auth(auth_id, encoded_pw);
-        let mut wire = BytesMut::new();
-        self.codec.encode(&frame, &mut wire)?;
+        let wire = self
+            .codec
+            .encode_sensitive(auth_id, PacketKind::Auth, &encoded_pw)?;
 
         let exchange = AuthExchange {
             expected_id: auth_id,
@@ -95,7 +99,7 @@ impl ProtocolState {
                     .encode(&RawFrame::response_value(sen_id, &[][..]), &mut wire)?;
                 (cmd_id, Some(sen_id))
             },
-            TerminationMode::SinglePacket => {
+            TerminationMode::SinglePacket | TerminationMode::CoalesceWindow { .. } => {
                 let cmd_id = self.id_allocator.next_id();
                 self.codec
                     .encode(&RawFrame::exec_command(cmd_id, encoded_cmd), &mut wire)?;
@@ -148,9 +152,19 @@ impl ProtocolState {
         }
         false
     }
+
+    /// Finalizes a [`CommandExchange`] operating in [`TerminationMode::CoalesceWindow`]
+    /// once the transport's post-fragment idle window has elapsed without further frames.
+    pub fn finish_coalesced(
+        &self,
+        exchange: &mut CommandExchange,
+    ) -> Result<CommandOutput, ProtoError> {
+        exchange.finish_coalesced()
+    }
 }
 
 /// Step outcome returned while driving an [`AuthExchange`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthStep {
     /// Preliminary packet processed (such as SRCDS's empty `RESPONSE_VALUE`); read another frame.
@@ -260,10 +274,17 @@ impl CommandOutput {
 }
 
 /// Step outcome returned while driving a [`CommandExchange`].
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandStep {
     /// Fragment accepted; more frames are required to reach deterministic termination.
     NeedMoreFrames,
+    /// Fragment accepted in [`TerminationMode::CoalesceWindow`]; wait up to `idle_window`
+    /// for any follow-up fragments before calling [`ProtocolState::finish_coalesced`].
+    Coalescing {
+        /// Quiet window to wait for any subsequent response fragment.
+        idle_window: Duration,
+    },
     /// Command response deterministically terminated and decoded.
     Completed(CommandOutput),
 }
@@ -349,7 +370,15 @@ impl CommandExchange {
                 )))
             },
             TerminationMode::SourceSentinel => Ok(CommandStep::NeedMoreFrames),
+            TerminationMode::CoalesceWindow { idle_window } => {
+                Ok(CommandStep::Coalescing { idle_window })
+            },
         }
+    }
+
+    fn finish_coalesced(&mut self) -> Result<CommandOutput, ProtoError> {
+        let decoded = self.dialect.encoding().decode_response(&self.accumulated)?;
+        Ok(CommandOutput::new(self.command_id, decoded, self.fragments))
     }
 
     fn finish_sentinel(

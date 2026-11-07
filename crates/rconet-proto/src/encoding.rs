@@ -1,6 +1,7 @@
 #[cfg(feature = "base64")]
 use base64::Engine as _;
 use bytes::Bytes;
+use zeroize::Zeroizing;
 
 use crate::error::ProtoError;
 
@@ -48,28 +49,54 @@ impl PayloadEncoding {
         Ok(encoded)
     }
 
-    /// Encodes an outbound authentication credential without leaking secret contents in errors.
-    pub fn encode_password(self, password: &str, max_bytes: usize) -> Result<Bytes, ProtoError> {
+    /// Encodes an outbound authentication credential into a [`Zeroizing`] byte buffer
+    /// without creating unzeroized heap copies or leaking secret contents in errors.
+    pub fn encode_password(
+        self,
+        password: &str,
+        max_bytes: usize,
+    ) -> Result<Zeroizing<Vec<u8>>, ProtoError> {
         if password.as_bytes().contains(&0) {
             return Err(ProtoError::PasswordContainsNullByte);
         }
 
-        let encoded = match self {
-            Self::LossyUtf8 | Self::StrictUtf8 => Bytes::copy_from_slice(password.as_bytes()),
+        match self {
+            Self::LossyUtf8 | Self::StrictUtf8 => {
+                if password.len() > max_bytes {
+                    return Err(ProtoError::PasswordTooLong {
+                        length: password.len(),
+                        max: max_bytes,
+                    });
+                }
+                let mut buf = Zeroizing::new(Vec::with_capacity(password.len()));
+                buf.extend_from_slice(password.as_bytes());
+                Ok(buf)
+            },
             #[cfg(feature = "base64")]
             Self::Base64Utf8 => {
-                let b64 = base64::engine::general_purpose::STANDARD.encode(password.as_bytes());
-                Bytes::from(b64.into_bytes())
+                let out_len = base64::encoded_len(password.len(), true).ok_or(
+                    ProtoError::PasswordTooLong {
+                        length: usize::MAX,
+                        max: max_bytes,
+                    },
+                )?;
+                if out_len > max_bytes {
+                    return Err(ProtoError::PasswordTooLong {
+                        length: out_len,
+                        max: max_bytes,
+                    });
+                }
+                let mut buf = Zeroizing::new(vec![0u8; out_len]);
+                let written = base64::engine::general_purpose::STANDARD
+                    .encode_slice(password.as_bytes(), &mut buf)
+                    .map_err(|_| ProtoError::PasswordTooLong {
+                        length: out_len,
+                        max: max_bytes,
+                    })?;
+                buf.truncate(written);
+                Ok(buf)
             },
-        };
-
-        if encoded.len() > max_bytes {
-            return Err(ProtoError::PasswordTooLong {
-                length: encoded.len(),
-                max: max_bytes,
-            });
         }
-        Ok(encoded)
     }
 
     /// Decodes an assembled response byte buffer into a Rust [`String`].
@@ -149,5 +176,12 @@ mod tests {
             .unwrap_or_default();
         let decoded = PayloadEncoding::Base64Utf8.decode_response(&wire);
         assert_eq!(decoded.as_deref(), Ok(cmd));
+
+        let pw = PayloadEncoding::Base64Utf8.encode_password("s3cr3t!", 64);
+        assert!(pw.is_ok());
+        assert_eq!(
+            PayloadEncoding::Base64Utf8.encode_password("s3cr3t!", 4),
+            Err(ProtoError::PasswordTooLong { length: 12, max: 4 })
+        );
     }
 }

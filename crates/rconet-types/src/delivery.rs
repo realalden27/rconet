@@ -45,6 +45,7 @@ impl CommandPhase {
 /// [`Idempotency::Idempotent`] is an explicit caller-level assertion that executing the
 /// command more than once (for example, a read-only `status` or `list` query) is acceptable
 /// within the caller's application context *if* an explicit retry policy is also enabled.
+#[non_exhaustive]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Idempotency {
     /// Command may mutate server state (default). Never replayed once transmission starts.
