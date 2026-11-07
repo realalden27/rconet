@@ -1,0 +1,33 @@
+[package]
+name = "rconet"
+description = "Asynchronous, cancellation-safe RCON client ecosystem for Rust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["tokio-tcp", "base64"]
+tokio-tcp = ["rconet-transport/tokio-tcp", "tokio/net"]
+base64 = ["rconet-proto/base64"]
+webrcon = ["rconet-proto/webrcon"]
+pool = []
+fleet = []
+
+[dependencies]
+rconet-proto = { workspace = true, default-features = false }
+rconet-transport = { workspace = true, default-features = false }
+rconet-types.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }

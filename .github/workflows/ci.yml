@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check & Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002 # stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install nextest and cargo-deny
+        uses: taiki-e/install-action@51c6c59b207559fa543f45c22502c38d5db07be9 # v2.49.18
+        with:
+          tool: cargo-nextest@0.9.100,cargo-deny@0.18.0
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check minimal feature matrix
+        run: cargo check --workspace --no-default-features
+
+      - name: Lint workspace (Clippy)
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Check runtime-free crates on wasm32
+        run: cargo check --target wasm32-unknown-unknown -p rconet-types -p rconet-proto
+
+      - name: Run tests (nextest)
+        run: cargo nextest run --profile ci --workspace --all-features
+
+      - name: Run documentation tests
+        run: cargo test --workspace --doc --all-features
+
+      - name: Verify crate layer hierarchy and scorecard
+        run: |
+          cargo run -p xtask -- layers
+          cargo run -p xtask -- docs --check
+
+      - name: Audit licenses and advisories
+        if: runner.os == 'Linux'
+        run: cargo deny check

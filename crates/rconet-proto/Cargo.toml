@@ -1,0 +1,30 @@
+[package]
+name = "rconet-proto"
+description = "Runtime-independent RCON wire framing, dialect profiles, and protocol state machines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["base64"]
+base64 = ["dep:base64"]
+webrcon = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+base64 = { workspace = true, optional = true }
+bytes.workspace = true
+rconet-types.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

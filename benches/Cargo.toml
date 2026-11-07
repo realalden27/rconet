@@ -1,0 +1,18 @@
+[package]
+name = "rconet-benches"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+rconet.workspace = true
+rconet-proto.workspace = true
+rconet-types.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true

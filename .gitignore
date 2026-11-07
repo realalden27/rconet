@@ -1,0 +1,8 @@
+# Build outputs
+/target/
+**/*.rs.bk
+
+# Environment & local secrets
+.env
+.env.*
+/secrets/

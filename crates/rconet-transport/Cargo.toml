@@ -1,0 +1,29 @@
+[package]
+name = "rconet-transport"
+description = "Asynchronous Tokio framed RCON transports and deterministic test server utilities"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["tokio-tcp"]
+tokio-tcp = ["tokio/net"]
+
+[dependencies]
+bytes.workspace = true
+rconet-proto.workspace = true
+rconet-types.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }

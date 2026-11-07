@@ -1,0 +1,80 @@
+[workspace]
+resolver = "3"
+members = [
+    "benches",
+    "crates/*",
+    "examples",
+    "xtask",
+]
+default-members = [
+    "crates/rconet-types",
+    "crates/rconet-proto",
+    "crates/rconet-transport",
+    "crates/rconet",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/realalden27/rconet"
+homepage = "https://github.com/realalden27/rconet"
+keywords = ["rcon", "async", "tokio", "game-server", "protocol"]
+categories = ["network-programming", "asynchronous", "game-development"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unused_imports = "deny"
+unused_must_use = "deny"
+unused_mut = "deny"
+unused_variables = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+wildcard_imports = "deny"
+dbg_macro = "deny"
+cognitive_complexity = "deny"
+
+[workspace.dependencies]
+# Internal workspace crates
+rconet-types = { version = "0.1.0", path = "crates/rconet-types" }
+rconet-proto = { version = "0.1.0", path = "crates/rconet-proto" }
+rconet-transport = { version = "0.1.0", path = "crates/rconet-transport" }
+rconet = { version = "0.1.0", path = "crates/rconet" }
+
+# Core dependencies
+base64 = "0.22"
+bytes = "1.9"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.43", default-features = false }
+toml = "0.8"
+tracing = "0.1"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# Testing & benchmarking
+criterion = "0.5"
+proptest = "1.6"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

@@ -1,0 +1,12 @@
+nextest-version = "0.9.100"
+
+[profile.default]
+fail-fast = true
+retries = 0
+
+[profile.ci]
+fail-fast = false
+retries = 0
+slow-timeout = { period = "30s", terminate-after = 2 }
+final-status-level = "fail"
+failure-output = "immediate-final"
