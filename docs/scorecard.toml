@@ -20,29 +20,29 @@ description = "Redacted credentials, typed identifiers, bounded limits, and deli
 id = "proto.wire_codec"
 layer = "L1"
 status = "complete"
-min_tests = 22
-description = "Bounds-checked binary framing, dialect profiles, auth & response termination state machines"
+min_tests = 26
+description = "Bounds-checked binary framing, zeroized auth buffers, dialect profiles, wire goldens, and state machines"
 
 [[capabilities]]
 id = "transport.tokio_tcp"
 layer = "L2"
 status = "complete"
-min_tests = 8
-description = "Framed async TCP/stream transport with deadlines and deterministic mock server"
+min_tests = 11
+description = "Framed async TCP/stream transport with checked deadlines, idle EOF monitor, and test-util mock server"
 
 [[capabilities]]
 id = "client.session_actor"
 layer = "L3"
 status = "complete"
-min_tests = 9
-description = "Cancellation-safe session actor and conservative non-replay reconnection engine"
+min_tests = 11
+description = "Cancellation-safe session actor, idle disconnect detection, and conservative non-replay reconnection"
 
 [[capabilities]]
 id = "client.pool_and_fleet"
 layer = "L3"
 status = "complete"
-min_tests = 5
-description = "Bounded session pool, tagged multi-server fleet broadcast, and reactive fleet events"
+min_tests = 8
+description = "Bounded session pool with idle TTL eviction, tagged fleet broadcast, and reactive fleet events"
 
 [[capabilities]]
 id = "sdk.examples_benches_docs"

@@ -44,8 +44,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Check minimal feature matrix
-        run: cargo check --workspace --no-default-features
+      - name: Test isolated --no-default-features matrix
+        run: |
+          cargo test -p rconet-types --no-default-features
+          cargo test -p rconet-proto --no-default-features
+          cargo test -p rconet-transport --no-default-features
+          cargo test -p rconet --no-default-features
 
       - name: Lint workspace (Clippy)
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -59,6 +63,11 @@ jobs:
       - name: Run documentation tests
         run: cargo test --workspace --doc --all-features
 
+      - name: Build rustdoc with -D warnings
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps --all-features
+
       - name: Verify crate layer hierarchy and scorecard
         run: |
           cargo run -p xtask -- layers
@@ -67,3 +76,67 @@ jobs:
       - name: Audit licenses and advisories
         if: runner.os == 'Linux'
         run: cargo deny check
+
+  msrv:
+    name: MSRV (Rust 1.88.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust 1.88.0
+        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002
+        with:
+          toolchain: "1.88.0"
+
+      - name: Verify MSRV compilation across workspace
+        run: cargo check --workspace --all-targets --all-features
+
+  live-rcon:
+    name: Live Server Smoke Suite (PaperMC RCON)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002 # stable
+
+      - name: Start containerized PaperMC RCON server
+        run: |
+          docker run -d --name paper-rcon \
+            -p 127.0.0.1:25575:25575 \
+            -e EULA=TRUE \
+            -e TYPE=PAPER \
+            -e ONLINE_MODE=FALSE \
+            -e ENABLE_RCON=true \
+            -e RCON_PASSWORD=rconet-ci-secret \
+            -e MEMORY=1G \
+            itzg/minecraft-server:latest
+
+          for i in $(seq 1 90); do
+            if docker logs paper-rcon 2>&1 | grep -E -q "RCON running on|Thread RCON Listener started"; then
+              echo "PaperMC RCON listener is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs paper-rcon || true
+          exit 1
+
+      - name: Execute live RCON integration suite
+        env:
+          RCON_LIVE_ADDR: "127.0.0.1:25575"
+          RCON_LIVE_PASSWORD: "rconet-ci-secret"
+          RCON_LIVE_PRESET: "minecraft"
+        run: cargo test -p rconet --all-features -- --ignored live_server
+
+      - name: Stop PaperMC container
+        if: always()
+        run: docker rm -f paper-rcon || true

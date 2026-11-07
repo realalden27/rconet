@@ -10,7 +10,7 @@
 flowchart TD
     L4["L4 (publish = false): examples/ & benches/"]
     L3["L3: rconet<br/>(Client, SessionActor, ReconnectPolicy, ServerPool, FleetManager)"]
-    L2["L2: rconet-transport<br/>(FramedConnection, Deadlines, Stream Tainting, MockRconServer)"]
+    L2["L2: rconet-transport<br/>(FramedConnection, Deadlines, Idle Monitor, test-util Mock)"]
     L1["L1: rconet-proto<br/>(FrameCodec, DialectProfile, AuthExchange, CommandExchange, WebRcon)"]
     L0["L0: rconet-types<br/>(SecretPassword, PacketId, ServerId, SessionId, FrameLimits, CommandPhase)"]
 
@@ -26,8 +26,8 @@ flowchart TD
 ### Layer Invariants
 
 1. **Runtime-Independent Core (`L0` + `L1`):** Neither `rconet-types` nor `rconet-proto` depends on Tokio, OS networking APIs, or wall-clock timers. Both crates compile cleanly for `wasm32-unknown-unknown` and can be fuzzed or embedded inside custom event loops synchronously.
-2. **Stream-Generic Framed I/O (`L2`):** `rconet-transport::FramedConnection<S>` operates over any `S: AsyncRead + AsyncWrite + Unpin` (Tokio `TcpStream`, TLS/SSH-tunneled streams, or `tokio::io::DuplexStream` in deterministic tests).
-3. **Actor-Managed Concurrency (`L3`):** `rconet::Client` owns a bounded `mpsc` channel to a dedicated `SessionActor` task so concurrent tasks never interleave frames on a half-duplex RCON socket.
+2. **Stream-Generic Framed I/O (`L2`):** `rconet-transport::FramedConnection<S>` operates over any `S: AsyncRead + AsyncWrite + Unpin` (Tokio `TcpStream`, TLS/SSH-tunneled streams via `Client::connect_with`, or `tokio::io::DuplexStream` in deterministic tests). Test-only server utilities (`rconet_transport::mock`) are gated behind `feature = "test-util"` so production builds compile zero mock code.
+3. **Actor-Managed Concurrency & Idle Monitoring (`L3`):** `rconet::Client` owns a bounded `mpsc` channel to a dedicated `SessionActor` task so concurrent tasks never interleave frames on a half-duplex RCON socket. While idle between commands, `SessionActor` uses a biased `tokio::select!` over `FramedConnection::monitor_idle()` to detect remote `EOF` (`FIN`) or `RST` immediately—transitioning state to `Closed` (evicting dead pooled sockets before the next command) or triggering jittered background reconnection (`ReconnectPolicy::exponential`).
 
 ---
 
@@ -88,11 +88,12 @@ TCP writes only confirm bytes copied into the local kernel send buffer—not app
 - **`ReplayMode::NeverReplay` (Default):** Any failure once socket writing starts returns `OutcomeUnknown` immediately to the caller. If `ReconnectPolicy` is enabled, `SessionActor` re-establishes and re-authenticates a fresh connection in the background for *subsequent* commands without replaying the ambiguous command.
 - **`ReplayMode::ReplayIdempotentOnly { max_replays }`:** Opts into bounded automatic replay **strictly** for commands where the caller also passed `CommandOptions::new().idempotent()` (for example `"list"` or `"status"`). Mutating commands (`Idempotency::NonIdempotent`, the default) are still never replayed.
 - **Credential Rejection Circuit Breaker:** If a server responds with `PacketId == -1` (`Error::AuthRejected`), `SessionActor` transitions permanently to `ConnectionState::Closed` without retrying, preventing accidental IP auto-bans from repeated bad-password handshakes.
+- **Bounded Backoff Floor & Jitter:** `ReconnectPolicy::exponential` enforces a `10 ms` minimum floor (`MIN_RECONNECT_DELAY`) and applies `±20%` SplitMix64 jitter per session to prevent synchronized reconnect storms across fleets. `ServerPool` additionally enforces a configurable idle TTL (`ServerPool::with_max_idle`, default `5` minutes) alongside instant `EOF` eviction.
 
 ---
 
-## 4. Transport & Protocol Separation (`WebRcon`)
+## 4. Transport & Protocol Separation (`WebRcon` & `v0.2.0` Roadmap)
 
 WebSocket RCON servers speak a JSON text protocol (`Identifier`, `Message`, `Name`, `Type`, `Stacktrace`) over WebSocket frames. In accordance with strict layer separation:
 - `rconet-proto` (`feature = "webrcon"`) implements runtime-independent, size-bounded JSON serialization/deserialization (`WebRconRequest`, `WebRconEvent`, and forward-compatible `WebRconMessageKind` with `#[serde(other)] Unknown`) and distinguishes correlated command replies (`Identifier > 0`) from unsolicited live console/chat broadcasts (`Identifier <= 0`).
-- `rconet-transport` deliberately avoids pulling a heavy WebSocket/HTTP/TLS dependency tree in v0.1, keeping compile times small and letting applications pair `rconet::WebRconRequest` / `WebRconEvent` with their existing WebSocket client stack.
+- In `v0.1.0`, `rconet-transport` focuses strictly on binary stream/TCP RCON so applications avoid unnecessary HTTP/TLS crate lock-in and can pair `rconet::WebRconRequest` / `WebRconEvent` with any WebSocket client. Managed async WebSocket session transport is scheduled for `v0.2.0`.

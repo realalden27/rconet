@@ -44,7 +44,7 @@ Binary TCP RCON frames use little-endian signed 32-bit integers:
 1. **Authentication Handshake:**
    - Upon receiving `SERVERDATA_AUTH (3)`, classic Valve `SRCDS` emits an empty `SERVERDATA_RESPONSE_VALUE (0)` frame **before** emitting `SERVERDATA_AUTH_RESPONSE (2)`.
    - Other Source-compatible servers emit `SERVERDATA_AUTH_RESPONSE (2)` immediately.
-   - `AuthExchange` accepts `0..=4` preliminary `RESPONSE_VALUE` frames before `AUTH_RESPONSE`, capping the count at `4` so a broken or malicious endpoint cannot trap the client in an infinite pre-auth loop.
+   - `AuthExchange` accepts preliminary `RESPONSE_VALUE` frames carrying `expected_id` before `AUTH_RESPONSE`, capping the count at `DialectProfile::max_pre_auth_frames()` (`8` for `Source` / `SinglePacket` / `Base64Tcp`, `4` for `MinecraftJava`) so a broken or malicious endpoint cannot trap the client in an infinite pre-auth loop.
 2. **Deterministic Multi-Packet Termination (`TerminationMode::SourceSentinel`):**
    - Large command outputs (such as `cvarlist` or `status` on full servers) split across multiple `RESPONSE_VALUE` frames with no `"end-of-response"` bit in the header.
    - Rather than sleeping for an arbitrary idle window, `rconet` allocates two distinct positive `PacketId`s (`command_id` and `sentinel_id`) and pipelines an empty `RESPONSE_VALUE (0)` frame carrying `sentinel_id` immediately after the `EXECCOMMAND (2)` frame.
@@ -62,17 +62,24 @@ Binary TCP RCON frames use little-endian signed 32-bit integers:
    - Vanilla Minecraft Java Edition reads inbound RCON packets into a fixed `1,460`-byte buffer (`RconClient.java`).
    - Subtracting the `4`-byte `Length` field, `4`-byte `PacketId`, `4`-byte `Type`, and `2`-byte trailing NUL pad (`14` bytes total) leaves **`1,446` bytes** maximum for the encoded command string.
    - Commands exceeding `1,446` bytes cause the server to fail parsing or drop the connection; `Preset::MinecraftJava` rejects `> 1,446`-byte commands locally at `CommandPhase::NotSent` (`ProtoError::CommandTooLong`).
-2. **Termination Trade-Off (`SinglePacket` Default vs `SourceSentinel`):**
+2. **Termination Trade-Off (`SinglePacket` Default vs `CoalesceWindow` vs `SourceSentinel`):**
    - Vanilla Minecraft Java splits responses larger than `4,096` bytes across multiple frames, **but** sending a `RESPONSE_VALUE (0)` sentinel causes the server to reply with `"Unknown request 0"` (hex `0`) and log warnings on certain modded derivatives.
    - `Preset::MinecraftJava` therefore defaults to `TerminationMode::SinglePacket` for clean console operation on typical commands (`list`, `whitelist`, `tp`, `say`, `gamerule`).
-   - Callers expecting `> 4,096`-byte vanilla outputs (e.g., large `data get entity` dumps) can opt into sentinel framing explicitly:
+   - Callers expecting `> 4,096`-byte outputs (e.g., large `data get entity` dumps) can opt into quiet-window coalescing (zero sentinel packets, zero server console warnings) or sentinel framing explicitly:
      ```rust
+     use std::time::Duration;
      use rconet::{DialectProfile, Preset, TerminationMode};
 
-     let dialect = DialectProfile::from(Preset::MinecraftJava)
+     // Option A: Quiet-window coalescing (no sentinel packet sent):
+     let quiet_multi = DialectProfile::from(Preset::MinecraftJava)
+         .with_termination(TerminationMode::CoalesceWindow {
+             idle_window: Duration::from_millis(25),
+         });
+
+     // Option B: Deterministic sentinel framing (handles `"Unknown request 0"` cleanly):
+     let sentinel_multi = DialectProfile::from(Preset::MinecraftJava)
          .with_termination(TerminationMode::SourceSentinel);
      ```
-     Because `ProtocolState` handles non-empty sentinel replies (`"Unknown request 0"`) cleanly without expecting an SRCDS trailer, multi-packet Minecraft Java responses terminate accurately when opted in.
 3. **Inter-Command Pacing (`minecraft_java_legacy`):**
    - Historical Minecraft Java versions prior to `1.14.3` suffered from an RCON thread-safety bug (`MC-72390`) under rapid back-to-back packets.
    - Modern servers (`1.14.3+`) fixed this, so `Preset::MinecraftJava` imposes **zero** artificial latency. For `< 1.14.3` servers, `DialectProfile::minecraft_java_legacy()` configures a `3 ms` minimum interval enforced inside `SessionActor`.

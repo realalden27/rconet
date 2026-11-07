@@ -4,7 +4,23 @@ use crate::{docs, layers};
 
 pub(crate) fn run_ci() -> Result<(), String> {
     run_cargo(&["fmt", "--all", "--", "--check"])?;
-    run_cargo(&["check", "--workspace", "--no-default-features"])?;
+
+    for pkg in ["rconet-types", "rconet-proto", "rconet-transport", "rconet"] {
+        run_cargo(&["test", "-p", pkg, "--no-default-features"])?;
+    }
+
+    for feat in ["pool", "fleet", "webrcon"] {
+        run_cargo(&[
+            "check",
+            "-p",
+            "rconet",
+            "--lib",
+            "--no-default-features",
+            "--features",
+            feat,
+        ])?;
+    }
+
     run_cargo(&[
         "clippy",
         "--workspace",

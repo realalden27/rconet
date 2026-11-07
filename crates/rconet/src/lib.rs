@@ -71,3 +71,15 @@ pub use rconet_proto as proto;
 pub use rconet_transport as transport;
 /// Foundational types re-exported from `rconet-types`.
 pub use rconet_types as types;
+
+#[cfg(all(
+    doctest,
+    feature = "tokio-tcp",
+    feature = "pool",
+    feature = "fleet",
+    feature = "webrcon"
+))]
+mod readme_doctests {
+    #[doc = include_str!("../../../README.md")]
+    struct ReadmeDoctests;
+}
