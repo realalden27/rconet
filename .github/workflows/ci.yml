@@ -31,15 +31,15 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002 # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
       - name: Install nextest and cargo-deny
-        uses: taiki-e/install-action@51c6c59b207559fa543f45c22502c38d5db07be9 # v2.49.18
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
-          tool: cargo-nextest@0.9.100,cargo-deny@0.18.0
+          tool: cargo-nextest@0.9.151,cargo-deny@0.20.2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -88,7 +88,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust 1.88.0
-        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002
+        uses: dtolnay/rust-toolchain@360a4e93673de6630fac2478bc9e35244b01a759 # 1.88.0
         with:
           toolchain: "1.88.0"
 
@@ -106,7 +106,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@ce7fbbeab2bfab3b590fb9cefa8d4f0cfbedd002 # stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
       - name: Start containerized PaperMC RCON server
         run: |
@@ -115,13 +115,18 @@ jobs:
             -e EULA=TRUE \
             -e TYPE=PAPER \
             -e ONLINE_MODE=FALSE \
+            -e LEVEL_TYPE=flat \
+            -e GENERATE_STRUCTURES=false \
+            -e SPAWN_PROTECTION=0 \
+            -e VIEW_DISTANCE=4 \
             -e ENABLE_RCON=true \
             -e RCON_PASSWORD=rconet-ci-secret \
             -e MEMORY=1G \
             itzg/minecraft-server:latest
 
-          for i in $(seq 1 90); do
+          for i in $(seq 1 120); do
             if docker logs paper-rcon 2>&1 | grep -E -q "RCON running on|Thread RCON Listener started"; then
+              sleep 1
               echo "PaperMC RCON listener is ready"
               exit 0
             fi
