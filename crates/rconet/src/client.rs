@@ -1,8 +1,10 @@
 use std::fmt;
+use std::future::Future;
+use std::sync::Arc;
 use std::time::Duration;
 
 use rconet_proto::{CommandOutput, DialectProfile, Preset};
-use rconet_transport::FramedConnection;
+use rconet_transport::{FramedConnection, TransportError};
 use rconet_types::{SecretPassword, TimeoutConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -48,9 +50,9 @@ impl Client {
 
     /// Spawns a cancellation-safe [`Client`] over an already-authenticated [`FramedConnection`].
     ///
-    /// Useful for running RCON over custom streams (such as TLS wrappers, SSH port-forwarded
-    /// streams, or `tokio::io::DuplexStream` in deterministic tests). Because no reconnect
-    /// factory is attached, automatic reconnection is disabled.
+    /// Useful for one-off sessions over custom streams. To enable automatic reconnection and
+    /// [`ReplayMode`] over custom streams (such as TLS wrappers, SSH port-forwarded streams, or
+    /// `tokio::io::DuplexStream`), use [`Client::connect_with`].
     #[must_use]
     pub fn from_connection<S>(connection: FramedConnection<S>) -> Self
     where
@@ -63,6 +65,37 @@ impl Client {
             ReplayMode::NeverReplay,
             DEFAULT_QUEUE_CAPACITY,
         )
+    }
+
+    /// Establishes an RCON session using a custom asynchronous [`FramedConnection`] factory,
+    /// enabling full [`ReconnectPolicy`] and [`ReplayMode`] support over non-TCP transports
+    /// (such as TLS wrappers, SSH tunnels, Unix domain sockets, or `tokio::io::DuplexStream`).
+    pub async fn connect_with<S, F, Fut>(
+        connector: F,
+        reconnect_policy: ReconnectPolicy,
+        replay_mode: ReplayMode,
+        queue_capacity: usize,
+    ) -> Result<Self, Error>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<FramedConnection<S>, TransportError>> + Send + 'static,
+    {
+        let initial_conn = connector().await.map_err(Error::from_transport)?;
+        let reconnector: Option<ReconnectFn<S>> =
+            if matches!(reconnect_policy, ReconnectPolicy::Disabled) {
+                None
+            } else {
+                Some(Arc::new(move || Box::pin(connector())))
+            };
+
+        Ok(Self::spawn_actor(
+            initial_conn,
+            reconnector,
+            reconnect_policy,
+            replay_mode,
+            queue_capacity,
+        ))
     }
 
     pub(crate) fn spawn_actor<S>(

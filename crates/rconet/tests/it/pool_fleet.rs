@@ -1,5 +1,66 @@
 #[cfg(feature = "pool")]
-mod pool_tests {
+mod pool_duplex_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use rconet::transport::mock::{MockReply, MockServerConfig, serve_duplex_stream};
+    use rconet::{
+        Client, DialectProfile, Error, FramedConnection, Preset, SecretPassword, ServerPool,
+        TimeoutConfig,
+    };
+    use tokio::io::duplex;
+
+    #[tokio::test]
+    async fn duplex_pool_evicts_ttl_expired_idle_sessions() -> Result<(), Error> {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let opened_clone = Arc::clone(&opened);
+
+        let pool = ServerPool::with_connector(
+            move || {
+                let count = opened_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                async move {
+                    let (client_io, server_io) = duplex(4096);
+                    let cfg = MockServerConfig::with_password("pw")
+                        .route("whoami", MockReply::Single(format!("session-{count}")));
+                    tokio::spawn(serve_duplex_stream(server_io, cfg));
+
+                    let conn = FramedConnection::handshake(
+                        client_io,
+                        &SecretPassword::new("pw"),
+                        DialectProfile::from(Preset::SinglePacket),
+                        TimeoutConfig::default(),
+                    )
+                    .await
+                    .map_err(Error::from_transport)?;
+                    Ok(Client::from_connection(conn))
+                }
+            },
+            2,
+            Duration::from_secs(1),
+        )?
+        .with_max_idle(Duration::from_millis(30))?;
+
+        assert_eq!(pool.execute("whoami").await?.body(), "session-1");
+        assert_eq!(pool.execute("whoami").await?.body(), "session-1");
+        assert_eq!(opened.load(Ordering::SeqCst), 1);
+
+        // Let the idle session age past `max_idle` (30ms):
+        tokio::time::sleep(Duration::from_millis(45)).await;
+
+        // Checkout evicts expired `session-1` and opens `session-2` cleanly:
+        assert_eq!(pool.execute("whoami").await?.body(), "session-2");
+        assert_eq!(opened.load(Ordering::SeqCst), 2);
+
+        pool.shutdown().await;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "pool", feature = "tokio-tcp"))]
+mod pool_tcp_tests {
+    use std::net::SocketAddr;
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
     use rconet::transport::mock::{MockRconServer, MockReply, MockServerConfig};
@@ -36,10 +97,8 @@ mod pool_tests {
         let pool_slow = pool.clone();
         let slow_task = tokio::spawn(async move { pool_slow.execute("slow").await });
 
-        // Ensure `slow` acquires the first socket before `fast` runs:
         tokio::time::sleep(Duration::from_millis(20)).await;
 
-        // `fast` opens a second parallel session instead of waiting behind `slow`:
         let started = tokio::time::Instant::now();
         let fast_out = pool.execute("fast").await?;
         assert_eq!(fast_out.body(), "fast-ok");
@@ -51,7 +110,6 @@ mod pool_tests {
         assert_eq!(server.connections_accepted(), 2);
         assert_eq!(pool.idle_count(), 2);
 
-        // Subsequent command reuses one of the warm idle sessions without dialing a 3rd socket:
         let reused = pool.execute("reuse").await?;
         assert_eq!(reused.body(), "reused-ok");
         assert_eq!(server.connections_accepted(), 2);
@@ -64,7 +122,6 @@ mod pool_tests {
 
     #[tokio::test]
     async fn pool_enforces_acquire_timeout_and_discards_tainted_sessions() -> Result<(), Error> {
-        // Validate configuration bounds first:
         let dummy = Client::builder().address("127.0.0.1:25575").password("pw");
         assert!(ServerPool::new(dummy.clone(), 0, Duration::from_secs(1)).is_err());
         assert!(
@@ -94,21 +151,17 @@ mod pool_tests {
         let lease = pool.acquire().await?;
         assert_eq!(lease.execute("ping").await?.body(), "pong");
 
-        // Pool capacity is 1 and `lease` is still held -> second checkout times out cleanly:
         let saturated = pool.acquire().await;
         assert!(matches!(saturated, Err(Error::PoolAcquireTimeout { .. })));
 
-        // Trigger a mid-flight disconnect on `lease`:
         let dropped = lease.execute("drop_once").await;
         assert!(
             matches!(dropped, Err(ref e) if e.command_phase() == Some(CommandPhase::OutcomeUnknown))
         );
 
-        // Dropping the degraded lease must discard the closed Client rather than returning it to `idle`:
         drop(lease);
         assert_eq!(pool.idle_count(), 0);
 
-        // Next execute lazily establishes a fresh healthy session:
         let healed = pool.execute("drop_once").await?;
         assert_eq!(healed.body(), "recovered");
         assert_eq!(server.connections_accepted(), 2);
@@ -117,10 +170,121 @@ mod pool_tests {
         server.shutdown().await;
         Ok(())
     }
+
+    #[tokio::test]
+    async fn idle_server_disconnect_immediately_updates_state_and_evicts_from_pool()
+    -> Result<(), Error> {
+        let srv1 = MockRconServer::start(
+            MockServerConfig::with_password("pw")
+                .route("ban_griefer", MockReply::Single("banned-on-1".to_string()))
+                .route("warmup", MockReply::Single("warm".to_string())),
+        )
+        .await
+        .map_err(|e| Error::from_transport(rconet::TransportError::ConnectIo(e)))?;
+
+        let srv2 = MockRconServer::start(
+            MockServerConfig::with_password("pw")
+                .route("ban_griefer", MockReply::Single("banned-on-2".to_string())),
+        )
+        .await
+        .map_err(|e| Error::from_transport(rconet::TransportError::ConnectIo(e)))?;
+
+        let active_addr: Arc<Mutex<SocketAddr>> = Arc::new(Mutex::new(srv1.addr()));
+        let addr_ref = Arc::clone(&active_addr);
+
+        let pool = ServerPool::with_connector(
+            move || {
+                let target = *addr_ref.lock().unwrap_or_else(PoisonError::into_inner);
+                async move {
+                    Client::builder()
+                        .address(target.to_string())
+                        .password("pw")
+                        .preset(Preset::SinglePacket)
+                        .reconnect_policy(ReconnectPolicy::Disabled)
+                        .connect()
+                        .await
+                }
+            },
+            2,
+            Duration::from_secs(2),
+        )?;
+
+        // Warm up an idle TCP connection to `srv1`:
+        assert_eq!(pool.execute("warmup").await?.body(), "warm");
+        assert_eq!(pool.idle_count(), 1);
+
+        // Shut down `srv1` while the pooled socket is completely idle, and point new dials to `srv2`:
+        {
+            let mut guard = active_addr.lock().unwrap_or_else(PoisonError::into_inner);
+            *guard = srv2.addr();
+        }
+        srv1.shutdown().await;
+
+        // Give OS loopback TCP FIN ~20ms to wake `SessionActor`'s idle `monitor_idle`:
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        // Mutating command MUST succeed on `srv2` on the FIRST attempt instead of failing with `OutcomeUnknown`!
+        let out = pool.execute("ban_griefer").await?;
+        assert_eq!(out.body(), "banned-on-2");
+        assert_eq!(srv2.connections_accepted(), 1);
+
+        pool.shutdown().await;
+        srv2.shutdown().await;
+        Ok(())
+    }
 }
 
 #[cfg(feature = "fleet")]
-mod fleet_tests {
+mod fleet_duplex_tests {
+    use rconet::transport::mock::{MockReply, MockServerConfig, serve_duplex_stream};
+    use rconet::{
+        Client, CommandOptions, DialectProfile, Error, FleetFilter, FleetManager, FramedConnection,
+        Preset, SecretPassword, ServerId, TimeoutConfig,
+    };
+    use tokio::io::duplex;
+
+    #[tokio::test]
+    async fn duplex_fleet_broadcasts_without_tokio_tcp_feature() -> Result<(), Error> {
+        let fleet = FleetManager::with_max_concurrency(2);
+
+        for (name, tag) in [("alpha", "eu"), ("beta", "us")] {
+            let (client_io, server_io) = duplex(4096);
+            let cfg = MockServerConfig::with_password("pw")
+                .route("ping", MockReply::Single(format!("pong-{name}")));
+            tokio::spawn(serve_duplex_stream(server_io, cfg));
+            let conn = FramedConnection::handshake(
+                client_io,
+                &SecretPassword::new("pw"),
+                DialectProfile::from(Preset::SinglePacket),
+                TimeoutConfig::default(),
+            )
+            .await
+            .map_err(Error::from_transport)?;
+            fleet
+                .register(ServerId::new(name)?, Client::from_connection(conn), [tag])
+                .await;
+        }
+
+        let eu_only = fleet
+            .broadcast(
+                &FleetFilter::WithTag("eu".to_string()),
+                "ping",
+                CommandOptions::new(),
+            )
+            .await;
+        assert_eq!(eu_only.len(), 1);
+        assert!(matches!(
+            eu_only.get(&ServerId::new("alpha")?),
+            Some(Ok(out)) if out.body() == "pong-alpha"
+        ));
+
+        fleet.shutdown_all().await;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "fleet", feature = "tokio-tcp"))]
+mod fleet_tcp_tests {
     use std::time::Duration;
 
     use rconet::transport::mock::{MockRconServer, MockReply, MockServerConfig};
@@ -194,7 +358,6 @@ mod fleet_tests {
             .await;
         assert_eq!(fleet.len().await, 3);
 
-        // Targeted execution + unknown ServerId check:
         assert_eq!(
             fleet.execute(&id_alpha, "list").await?.body(),
             "alpha: 12/20"
@@ -205,8 +368,6 @@ mod fleet_tests {
             Err(Error::UnknownServer { .. })
         ));
 
-        // Tag-filtered broadcast: `gamma` drops mid-flight, but `alpha` still succeeds cleanly
-        // and `beta` (tagged `creative`) is untouched!
         let results = fleet
             .broadcast(
                 &FleetFilter::WithTag("survival".to_string()),
@@ -261,12 +422,12 @@ mod fleet_tests {
             .address(server.addr().to_string())
             .password("pw")
             .preset(Preset::SinglePacket)
-            .reconnect_policy(ReconnectPolicy::ExponentialBackoff {
-                initial_delay: Duration::from_millis(15),
-                max_delay: Duration::from_millis(45),
-                multiplier: 1.5,
-                max_attempts: Some(3),
-            })
+            .reconnect_policy(ReconnectPolicy::exponential(
+                Duration::from_millis(15),
+                Duration::from_millis(45),
+                1.5,
+                Some(3),
+            ))
             .connect()
             .await?;
 
@@ -286,11 +447,9 @@ mod fleet_tests {
             if server_id == &id
         ));
 
-        // Trigger transient disconnect -> background heal:
         let _ = fleet.execute(&id, "flap").await;
         assert_eq!(fleet.execute(&id, "ok").await?.body(), "fine");
 
-        // Drain events until we observe both `Reconnecting` and `Ready` transitions:
         let mut saw_reconnecting = false;
         let mut saw_ready_again = false;
         for _ in 0..4 {

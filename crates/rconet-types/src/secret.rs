@@ -52,6 +52,12 @@ impl From<&str> for SecretPassword {
     }
 }
 
+impl From<&String> for SecretPassword {
+    fn from(value: &String) -> Self {
+        Self::new(value.as_str())
+    }
+}
+
 impl fmt::Debug for SecretPassword {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SecretPassword([REDACTED])")

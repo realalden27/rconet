@@ -48,9 +48,9 @@ pub use fleet::{
     DEFAULT_FLEET_CONCURRENCY, DEFAULT_FLEET_EVENT_CAPACITY, FleetEvent, FleetFilter, FleetManager,
     MAX_FLEET_CONCURRENCY,
 };
-pub use policy::{ReconnectPolicy, ReplayMode};
+pub use policy::{MIN_RECONNECT_DELAY, ReconnectPolicy, ReplayMode};
 #[cfg(feature = "pool")]
-pub use pool::{MAX_POOL_SESSIONS, PooledClient, ServerPool};
+pub use pool::{DEFAULT_MAX_IDLE_DURATION, MAX_POOL_SESSIONS, PooledClient, ServerPool};
 pub use rconet_proto::{
     CommandOutput, DialectProfile, PayloadEncoding, Preset, ProtoError, TerminationMode,
 };
@@ -60,8 +60,8 @@ pub use rconet_proto::{
 };
 pub use rconet_transport::{CommandFailureKind, FramedConnection, TransportError};
 pub use rconet_types::{
-    CommandPhase, FrameLimits, Idempotency, PacketId, SecretPassword, ServerId, SessionId,
-    TimeoutConfig, TypeError,
+    CommandPhase, FrameLimits, Idempotency, MAX_TIMEOUT_DURATION, PacketId, SecretPassword,
+    ServerId, SessionId, TimeoutConfig, TypeError,
 };
 pub use state::{CommandOptions, ConnectionState};
 

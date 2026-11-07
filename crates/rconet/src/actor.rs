@@ -7,7 +7,7 @@ use rconet_proto::{CommandOutput, DialectProfile};
 use rconet_transport::{FramedConnection, TransportError};
 #[cfg(feature = "tokio-tcp")]
 use rconet_types::SecretPassword;
-use rconet_types::{CommandPhase, Idempotency, TimeoutConfig, TypeError};
+use rconet_types::{CommandPhase, Idempotency, MAX_TIMEOUT_DURATION, TimeoutConfig, TypeError};
 use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(feature = "tokio-tcp")]
 use tokio::net::TcpStream;
@@ -60,6 +60,7 @@ pub(crate) struct SessionActor<S> {
     state_tx: watch::Sender<ConnectionState>,
     shutdown_rx: watch::Receiver<bool>,
     last_command_completed: Option<Instant>,
+    jitter_seed: u64,
 }
 
 impl<S> SessionActor<S>
@@ -78,6 +79,7 @@ where
     ) -> Self {
         let dialect = initial_conn.dialect();
         let timeouts = initial_conn.timeouts();
+        let jitter_seed = initial_conn.session_id().as_u64();
         Self {
             conn: Some(initial_conn),
             reconnector,
@@ -89,11 +91,28 @@ where
             state_tx,
             shutdown_rx,
             last_command_completed: None,
+            jitter_seed,
         }
     }
 
     pub(crate) async fn run(mut self) {
-        while let Some(req) = self.rx.recv().await {
+        loop {
+            let maybe_req = tokio::select! {
+                biased;
+                req = self.rx.recv() => req,
+                () = monitor_conn_idle(&mut self.conn), if self.conn.is_some() => {
+                    self.handle_idle_disconnect().await;
+                    if self.state_tx.borrow().is_closed() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            let Some(req) = maybe_req else {
+                break;
+            };
+
             match req {
                 SessionRequest::Execute {
                     command,
@@ -118,6 +137,18 @@ where
         self.fail_remaining_queued();
     }
 
+    async fn handle_idle_disconnect(&mut self) {
+        self.conn = None;
+        if !matches!(self.reconnect_policy, ReconnectPolicy::Disabled) && self.reconnector.is_some()
+        {
+            debug!("idle RCON connection closed by peer; starting background reconnect");
+            let _ = self.ensure_healthy_connection().await;
+        } else {
+            debug!("idle RCON connection closed by peer; marking session Closed");
+            let _ = self.state_tx.send(ConnectionState::Closed);
+        }
+    }
+
     async fn handle_execute(
         &mut self,
         command: String,
@@ -135,6 +166,13 @@ where
         if effective_timeout.is_zero() {
             let _ = reply_tx.send(Err(Error::Config(TypeError::ZeroTimeout {
                 field: "command_timeout",
+            })));
+            return;
+        }
+        if effective_timeout > MAX_TIMEOUT_DURATION {
+            let _ = reply_tx.send(Err(Error::Config(TypeError::ExcessiveTimeout {
+                field: "command_timeout",
+                max: MAX_TIMEOUT_DURATION,
             })));
             return;
         }
@@ -273,7 +311,10 @@ where
         let mut attempt: u32 = 1;
         let mut last_err: Option<TransportError> = None;
 
-        while let Some(delay) = self.reconnect_policy.delay_for_attempt(attempt) {
+        while let Some(delay) = self
+            .reconnect_policy
+            .delay_for_attempt_jittered(attempt, self.jitter_seed)
+        {
             let _ = self
                 .state_tx
                 .send(ConnectionState::Reconnecting { attempt });
@@ -347,5 +388,14 @@ where
                 },
             }
         }
+    }
+}
+
+async fn monitor_conn_idle<S>(conn: &mut Option<FramedConnection<S>>)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if let Some(active) = conn.as_mut() {
+        active.monitor_idle().await;
     }
 }
