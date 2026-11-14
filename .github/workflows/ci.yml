@@ -88,7 +88,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust 1.88.0
-        uses: dtolnay/rust-toolchain@360a4e93673de6630fac2478bc9e35244b01a759 # 1.88.0
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # 1.88.0
         with:
           toolchain: "1.88.0"
 
